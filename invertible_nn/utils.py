@@ -24,3 +24,4 @@ def throughput(model,img_size=224,bs=1):
         print(f"batch_size {batch_size} throughput {count * batch_size / (tic2 - tic1)}")
         MB = 1024.0 * 1024.0
         print('memory:', torch.cuda.max_memory_allocated() / MB)
+

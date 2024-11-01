@@ -463,7 +463,7 @@ class VisionTransformer(nn.Module):
                 if mode == 'meft1':
                     new_block = MEFT_Block1(transformer_block, adapter, x1_factor, x2_factor)
                 elif mode == 'meft2':
-                    new_block = MEFT_Block2(transformer_block, adapter, x1_factor, x2_factor)
+                    new_block = MEFT_Block2(transformer_block, adapter, x1_factor, x2_factor) 
                 new_blocks.append(new_block)
             self.blocks = nn.Sequential(*new_blocks)
         elif mode == 'meft3':

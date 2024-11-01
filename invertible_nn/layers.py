@@ -8,8 +8,16 @@ from typing import Callable, Tuple, Any
 import sys
 import random
 
+def count_zeros(tensor):
+    return torch.count_nonzero(tensor == 0)
+
+#count the number of nonzero fp64 elements become to zero after converting to fp32
+def count_fp64(tensor):
+    return torch.count_nonzero((tensor.to(torch.float32) == 0) & (tensor != 0))
+    
+
 def log_tensor_stats(tensor, tensor_name):
-    print(f"{tensor_name}: Mean={tensor.mean().item()}, Std={tensor.std().item()}, Min={tensor.min().item()}, Max={tensor.max().item()}")
+    print(f"{tensor_name:10}: Zero count: {count_zeros(tensor):5}, FP64 to FP32 zero count: {count_fp64(tensor):5}")
 
 class InvertibleLayer(Function):
     @staticmethod
@@ -183,6 +191,8 @@ class CouplingBlock(nn.Module):
 
 class NewInvertibleCouplingLayer(Function):
 
+    fixed_point_scale = 2e14
+    use_fixed_point = False
     """
     Custom Backpropagation function to allow (A) flusing memory in forward
     and (B) activation recomputation reversibly in backward for gradient
@@ -292,6 +302,8 @@ class NewInvertibleCouplingLayer(Function):
             Y_1, Y_2 = torch.chunk(y, 2, dim=-1)
             dY_1, dY_2 = torch.chunk(dy, 2, dim=-1)
 
+        # log_tensor_stats(dY_1, "dY_1")
+        # log_tensor_stats(dY_2, "dY_2")
         log_tensor_stats(Y_1, "Y_1")
         log_tensor_stats(Y_2, "Y_2")
         # temporarily record intermediate activation for G
@@ -306,6 +318,7 @@ class NewInvertibleCouplingLayer(Function):
             _set_seed("G")
             g_Y_1 = G(Y_1)
             g_Y_1.backward(dY_2)
+
         Y_1_grad = Y_1.grad
         Y_1 = Y_1.detach()
         g_Y_1 = g_Y_1.detach()
@@ -315,14 +328,25 @@ class NewInvertibleCouplingLayer(Function):
 
         with torch.no_grad():
             # recomputing X_2 from the rev equation
-            X_2 = (Y_2 - g_Y_1) / X2_factor
 
-            # free memory since g_Y_1 is now not needed
-            del g_Y_1
+            if NewInvertibleCouplingLayer.use_fixed_point:
+                fixed_scale = NewInvertibleCouplingLayer.fixed_point_scale
+                Y_2_fp = (Y_2 * fixed_scale).round().long()
+                g_Y_1_fp = (g_Y_1 * fixed_scale).round().long()
+                
+                X_2_fp = (Y_2_fp - g_Y_1_fp) / int(X2_factor * fixed_scale)
+                X_2 = X_2_fp.float()  # 고정소수점 연산 후 float으로 변환
+
+                del g_Y_1_fp
+            else:
+                X_2 = (Y_2 - g_Y_1) / X2_factor
+
+                # free memory since g_Y_1 is now not needed
+                del g_Y_1
 
             # the gradients for the previous block
             dX_1 = dY_1 + Y_1_grad
-
+            
             # free memory since Y_1.grad is now not needed
             del Y_1_grad
 
@@ -333,7 +357,8 @@ class NewInvertibleCouplingLayer(Function):
             _set_seed("F")
             f_X_2 = F(X_2)
             f_X_2.backward(dX_1)
-            
+            # log_tensor_stats(dX_1, "dX_1")
+
         X_2_grad = X_2.grad
         X_2 = X_2.detach()
         f_X_2 = f_X_2.detach()
@@ -353,15 +378,26 @@ class NewInvertibleCouplingLayer(Function):
         
 
         if ctx.requires_output:
-            X_1 = (Y_1 - f_X_2) / X1_factor
-            del f_X_2
+            if NewInvertibleCouplingLayer.use_fixed_point:
+                fixed_scale = NewInvertibleCouplingLayer.fixed_point_scale
+                Y_1_fp = (Y_1 * fixed_scale).round().long()
+                f_X_2_fp = (f_X_2 * fixed_scale).round().long()
+                
+                X_1_fp = (Y_1_fp - f_X_2_fp) / int(X1_factor * fixed_scale)
+                X_1 = X_1_fp.float() # 고정소수점 연산 후 float으로 변환
+                del f_X_2_fp
+            else:
+                X_1 = (Y_1 - f_X_2) / X1_factor
+                del f_X_2
             x = torch.cat([X_1, X_2], dim=-1)
             ctx.save_output(x.detach())
 
             log_tensor_stats(X_1, "X_1")
             log_tensor_stats(X_2, "X_2")
-        breakpoint()
+        # breakpoint()
         return dx, None, None, None, None, None, None
+    
+
 
 
 class NewCouplingBlock(nn.Module):
