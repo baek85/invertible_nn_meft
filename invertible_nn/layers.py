@@ -8,6 +8,9 @@ from typing import Callable, Tuple, Any
 import sys
 import random
 
+def log_tensor_stats(tensor, tensor_name):
+    print(f"{tensor_name}: Mean={tensor.mean().item()}, Std={tensor.std().item()}, Min={tensor.min().item()}, Max={tensor.max().item()}")
+
 class InvertibleLayer(Function):
     @staticmethod
     def forward(ctx, x):
@@ -289,6 +292,8 @@ class NewInvertibleCouplingLayer(Function):
             Y_1, Y_2 = torch.chunk(y, 2, dim=-1)
             dY_1, dY_2 = torch.chunk(dy, 2, dim=-1)
 
+        log_tensor_stats(Y_1, "Y_1")
+        log_tensor_stats(Y_2, "Y_2")
         # temporarily record intermediate activation for G
         # and use them for gradient calculation of G
         with torch.enable_grad():
@@ -304,6 +309,9 @@ class NewInvertibleCouplingLayer(Function):
         Y_1_grad = Y_1.grad
         Y_1 = Y_1.detach()
         g_Y_1 = g_Y_1.detach()
+        
+        log_tensor_stats(g_Y_1, "g_Y_1")
+        log_tensor_stats(Y_1_grad, "Y_1_grad")
 
         with torch.no_grad():
             # recomputing X_2 from the rev equation
@@ -325,10 +333,13 @@ class NewInvertibleCouplingLayer(Function):
             _set_seed("F")
             f_X_2 = F(X_2)
             f_X_2.backward(dX_1)
+            
         X_2_grad = X_2.grad
         X_2 = X_2.detach()
         f_X_2 = f_X_2.detach()
-
+        
+        log_tensor_stats(X_2_grad, "X_2_grad")
+        log_tensor_stats(f_X_2, "f_X_2")
         with torch.no_grad():
             dY_2 = dY_2 * X2_factor
             dX_2 = dY_2 + X_2_grad
@@ -337,11 +348,19 @@ class NewInvertibleCouplingLayer(Function):
 
         dx = torch.cat([dX_1, dX_2], dim=-1)
 
+        log_tensor_stats(dX_1, "dX_1")
+        log_tensor_stats(dX_2, "dX_2")
+        
+
         if ctx.requires_output:
             X_1 = (Y_1 - f_X_2) / X1_factor
             del f_X_2
             x = torch.cat([X_1, X_2], dim=-1)
             ctx.save_output(x.detach())
+
+            log_tensor_stats(X_1, "X_1")
+            log_tensor_stats(X_2, "X_2")
+        breakpoint()
         return dx, None, None, None, None, None, None
 
 

@@ -5,20 +5,23 @@ device = torch.device("cuda")
 input = torch.rand(64, 3, 224, 224, requires_grad=True, device=device)
 
 model = InvertibleVisionTransformer(
-    depth=12,
+    depth=32,
     patch_size=(16, 16),
     image_size=(224, 224),
     num_classes=1000,
+    # mode='vanilla',
     mode='meft3',
-    scale_factor=0.1
+    scale_factor=1.0,
+    reduction_ratio=8
 )
 model.to(device=device)
 
 import numpy as np
 print(sum([np.prod(p.size()) for p in model.parameters()]))
 
-# model.layers[3].invert_when_backward = False
-# model.layers[7].invert_when_backward = False
+# for idx, block in enumerate(model.layers):
+#     if idx % 5 == 0:
+#         block.invert_when_backward = False
 
 # with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
 output = model(input)

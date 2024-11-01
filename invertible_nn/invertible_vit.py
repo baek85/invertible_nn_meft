@@ -96,8 +96,8 @@ class Adapter(nn.Module):
             nn.init.zeros_(self.up_proj.bias)
 
     def forward(self, x):
-        if self.adapter_layernorm_option == 'in':
-            x = self.adapter_layer_norm_before(x)
+        # if self.adapter_layernorm_option == 'in':
+        #     x = self.adapter_layer_norm_before(x)
 
         down = self.down_proj(x)
         down = self.non_linear_func(down)
@@ -106,8 +106,8 @@ class Adapter(nn.Module):
 
         up = up * self.scale
 
-        if self.adapter_layernorm_option == 'out':
-            up = self.adapter_layer_norm_before(up)
+        # if self.adapter_layernorm_option == 'out':
+        #     up = self.adapter_layer_norm_before(up)
         output = up
 
         return output
@@ -197,12 +197,12 @@ class MEFT_Block2(invertible_nn.layers.NewCouplingBlock):
         )
 
 class MEFT_Block3(invertible_nn.layers.NewCouplingBlock):
-    def __init__(self, attention, mlp, x1_factor=0.1, x2_factor=1.0):
+    def __init__(self, attention, mlp, x1_factor=0.1, x2_factor=0.1):
         super().__init__(
             F = attention,
             G = mlp,
-            X1_factor=1.0,
-            X2_factor=1.0,
+            X1_factor=x1_factor,
+            X2_factor=x2_factor,
             switch=False
         )
 
@@ -216,7 +216,8 @@ class InvertibleVisionTransformer(nn.Module):
         image_size=(32, 32),  # CIFAR-10 image size
         num_classes=10,
         mode='vanilla',
-        scale_factor=1.0
+        scale_factor=1.0,
+        reduction_ratio=8
     ):
         super().__init__()
 
@@ -224,7 +225,7 @@ class InvertibleVisionTransformer(nn.Module):
         self.n_head = n_head
         self.depth = depth
         self.patch_size = patch_size
-        self.reduction_ratio = 8
+        self.reduction_ratio = reduction_ratio
 
         num_patches = (image_size[0] // self.patch_size[0]) * \
             (image_size[1] // self.patch_size[1])
@@ -245,6 +246,8 @@ class InvertibleVisionTransformer(nn.Module):
                     MEFT_Block1(
                         TransformerBlock(dim=self.embed_dim, num_heads=self.n_head, mlp_ratio=4, r=self.reduction_ratio),
                         Adapter(n_embed=self.embed_dim, down_size=self.embed_dim // self.reduction_ratio, dropout=0.0, adapter_scalar="1.0", adapter_layernorm_option="in"),
+                        # AttentionSubBlock(dim=self.embed_dim, num_heads=self.n_head),
+                        # MLPSubblock(dim=self.embed_dim, mlp_ratio=4),
                         x1_factor=scale_factor,
                         x2_factor=1.0
                     )
