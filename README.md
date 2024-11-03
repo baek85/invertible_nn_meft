@@ -14,6 +14,7 @@ pip install git+https://github.com/baek85/invertible-nn-meft.git
 Coupling function consists of an arbitrary function F and G which performs following transform:  
 $$X_1, X_2 \leftarrow \text{split}(X)$$  
 $$Y_1 = \lambda_1 \cdot X_1 +  F(X_2)$$
+
 $$Y_2 = \lambda_2 \cdot X_2 + G(Y_1)$$
 $$Y \leftarrow [Y_1, Y_2]$$  
 
