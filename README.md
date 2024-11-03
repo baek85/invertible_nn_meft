@@ -4,7 +4,7 @@ This implements building blocks for reversible neural net. Because the layers ar
 
 ## Installation
 ```
-pip install git+https://github.com/hushon/invertible-nn.git
+pip install git+https://github.com/baek85/invertible-nn-meft.git
 ```
 
 ## Examples

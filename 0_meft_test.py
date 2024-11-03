@@ -1,6 +1,6 @@
 import torch
-from invertible_nn.invertible_vit import InvertibleVisionTransformer
-from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
+from invertible_nn_meft.invertible_vit import InvertibleVisionTransformer
+from invertible_nn_meft.vision_transformer import vit_base_patch16_224, convert_to_meft
 import timm
 
 def softmax_entropy(x: torch.Tensor) -> torch.Tensor:

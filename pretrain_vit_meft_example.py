@@ -1,5 +1,5 @@
 import torch
-from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
+from invertible_nn_meft.vision_transformer import vit_base_patch16_224, convert_to_meft
 
 
 precision=torch.float32
