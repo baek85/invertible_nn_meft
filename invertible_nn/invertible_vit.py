@@ -3,6 +3,97 @@ from torch import nn
 import invertible_nn
 import math
 
+
+class Adapter(nn.Module):
+    def __init__(self,
+                 in_features,
+                 hidden_features,
+                 out_features,
+                 dropout=0.0,
+                 adapter_scalar="learnable_scalar"):
+        super().__init__()
+        self.in_features = in_features
+        self.hidden_features = hidden_features
+        self.out_features = out_features
+
+        #_before
+        if adapter_scalar == "learnable_scalar":
+            self.scale = nn.Parameter(torch.ones(1))
+        else:
+            self.scale = float(adapter_scalar)
+
+        self.down_proj = nn.Linear(self.in_features, self.hidden_features)
+        self.non_linear_func = nn.ReLU()
+        self.up_proj = nn.Linear(self.hidden_features, self.out_features)
+
+        self.dropout = dropout
+        
+        with torch.no_grad():
+            nn.init.kaiming_uniform_(self.down_proj.weight, a=math.sqrt(5))
+            nn.init.zeros_(self.up_proj.weight)
+            # nn.init.normal_(self.down_proj.weight, std=0.02)
+            # nn.init.normal_(self.up_proj.weight, std=0.02)
+            nn.init.zeros_(self.down_proj.bias)
+            nn.init.zeros_(self.up_proj.bias)
+
+    def forward(self, x):
+        down = self.down_proj(x)
+        down = self.non_linear_func(down)
+        down = nn.functional.dropout(down, p=self.dropout, training=self.training)
+        up = self.up_proj(down)
+
+        up = up * self.scale
+
+        return up
+
+class MLP_with_Adapter(nn.Module):
+    def __init__(self, num_features, drop_path, norm2, mlp, r=4, adapter_scalar="1.0"):
+        super().__init__()
+        self.drop_path = drop_path
+        self.norm2 = norm2
+        self.mlp = mlp
+        self.adapter_mlp = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
+
+    def forward(self, x):
+        x = self.norm2(x)
+        x = x + self.drop_path(self.mlp(x)) + self.drop_path(self.adapter_mlp(x))
+        return x
+    
+class Attention_with_Adapter(nn.Module):
+    def __init__(self, num_features, drop_path, norm1, attn, r, adapter_scalar="1.0"):
+        super().__init__()
+        self.drop_path = drop_path
+        self.norm1 = norm1
+        self.attn = attn
+        self.adapter_attn = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
+
+    def forward(self, x):
+        x = self.norm1(x)
+        x = x + self.drop_path(self.attn(x)) + self.drop_path(self.adapter_attn(x))
+        return x
+    
+class Block_with_Adapter(nn.Module):
+
+    def __init__(self, num_features, norm1, attn, drop_path, norm2, mlp, r, adapter_scalar="1.0"):
+        super().__init__()
+        self.norm1 = norm1
+        self.attn = attn
+        self.drop_path = drop_path
+        self.norm2 = norm2
+        self.mlp = mlp
+        
+        self.adapter_attn = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
+        self.adapter_mlp = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
+
+    def forward(self, x):
+        x = self.norm1(x)
+        x = x + self.drop_path(self.attn(x)) + self.drop_path(self.adapter_attn(x))
+        x = self.norm2(x)
+        x = x + self.drop_path(self.mlp(x)) + self.drop_path(self.adapter_mlp(x))
+        # x = x + self.drop_path(self.attn(self.norm1(x))) + self.drop_path(self.adapter_attn(self.norm1(x))) * self.s
+        # x = x + self.drop_path(self.mlp(self.norm2(x))) + self.drop_path(self.adapter_mlp(self.norm2(x))) * self.s
+        return x
+    
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4, r=4):
         super().__init__()
@@ -57,60 +148,6 @@ class MLPBlock(nn.Module):
         out1 = self.mlp(x)
         out2 = self.adapter(x)
         return residual + out1 + out2
-    
-class Adapter(nn.Module):
-    def __init__(self,
-                 n_embed,
-                 down_size,
-                 dropout=0.0,
-                 adapter_scalar="learnable_scalar",
-                 adapter_layernorm_option="none"):
-        super().__init__()
-        self.n_embd = n_embed
-        self.down_size = down_size
-
-        #_before
-        self.adapter_layernorm_option = adapter_layernorm_option
-
-        self.adapter_layer_norm_before = None
-        if adapter_layernorm_option == "in" or adapter_layernorm_option == "out":
-            self.adapter_layer_norm_before = nn.LayerNorm(self.n_embd)
-
-        if adapter_scalar == "learnable_scalar":
-            self.scale = nn.Parameter(torch.ones(1))
-        else:
-            self.scale = float(adapter_scalar)
-
-        self.down_proj = nn.Linear(self.n_embd, self.down_size)
-        self.non_linear_func = nn.ReLU()
-        self.up_proj = nn.Linear(self.down_size, self.n_embd)
-
-        self.dropout = dropout
-        
-        with torch.no_grad():
-            nn.init.kaiming_uniform_(self.down_proj.weight, a=math.sqrt(5))
-            nn.init.zeros_(self.up_proj.weight)
-            # nn.init.normal_(self.down_proj.weight, std=0.02)
-            # nn.init.normal_(self.up_proj.weight, std=0.02)
-            nn.init.zeros_(self.down_proj.bias)
-            nn.init.zeros_(self.up_proj.bias)
-
-    def forward(self, x):
-        # if self.adapter_layernorm_option == 'in':
-        #     x = self.adapter_layer_norm_before(x)
-
-        down = self.down_proj(x)
-        down = self.non_linear_func(down)
-        down = nn.functional.dropout(down, p=self.dropout, training=self.training)
-        up = self.up_proj(down)
-
-        up = up * self.scale
-
-        # if self.adapter_layernorm_option == 'out':
-        #     up = self.adapter_layer_norm_before(up)
-        output = up
-
-        return output
 
 class MLPSubblock(nn.Module):
     """
@@ -176,6 +213,9 @@ class InvertibleTransformerBlock(invertible_nn.layers.CouplingBlock):
             MLPSubblock(dim=dim)
         )
 
+
+
+
 class MEFT_Block1(invertible_nn.layers.NewCouplingBlock):
     def __init__(self, transformer_block, adapter, x1_factor=0.1, x2_factor=1.0):
         super().__init__(
@@ -206,6 +246,8 @@ class MEFT_Block3(invertible_nn.layers.NewCouplingBlock):
             switch=False
         )
 
+
+    
 class InvertibleVisionTransformer(nn.Module):
     def __init__(
         self,

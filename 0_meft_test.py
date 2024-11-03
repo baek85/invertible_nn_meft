@@ -1,6 +1,7 @@
 import torch
 from invertible_nn.invertible_vit import InvertibleVisionTransformer
-from invertible_nn.vision_transformer import vit_base_patch16_224
+from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
+import timm
 
 def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
@@ -11,10 +12,11 @@ precision=torch.float32
 device = torch.device("cuda")
 input = torch.rand(64, 3, 224, 224, requires_grad=True, dtype=precision, device=device)
 
-model = vit_base_patch16_224(pretrained=True, num_classes=1000, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4)
-model.convert_to_meft(mode='meft1', x1_factor=0.5, x2_factor=1.0, reduction_ratio=4)
-# model.convert_to_meft(mode='meft2', x1_factor=1.0, x2_factor=0.1, reduction_ratio=4)
-# model.convert_to_meft(mode='meft3', x1_factor=0.1, x2_factor=0.1, reduction_ratio=4)
+model = vit_base_patch16_224(pretrained=True, num_classes=1000)
+# model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=1000)
+convert_to_meft(model, mode='meft1', x1_factor=0.5, x2_factor=1.0, reduction_ratio=4)
+# convert_to_meft(model, mode='meft2', x1_factor=1.0, x2_factor=0.1, reduction_ratio=4)
+# convert_to_meft(model, mode='meft3', x1_factor=0.1, x2_factor=0.1, reduction_ratio=4)
 model.to(device=device, dtype=precision)
 
 import numpy as np

@@ -37,7 +37,7 @@ from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, IMAGENET_INCE
 from timm.models.helpers import build_model_with_cfg, named_apply, adapt_input_conv
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
 from timm.models.registry import register_model
-from .invertible_vit import MEFT_Block1, MEFT_Block2, MEFT_Block3
+from .invertible_vit import MEFT_Block1, MEFT_Block2, MEFT_Block3, Attention_with_Adapter, MLP_with_Adapter, Block_with_Adapter, Adapter
 
 
 _logger = logging.getLogger(__name__)
@@ -250,126 +250,6 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
-class Adapter(nn.Module):
-    def __init__(self,
-                 in_features,
-                 hidden_features,
-                 out_features,
-                 dropout=0.0,
-                 adapter_scalar="learnable_scalar"):
-        super().__init__()
-        self.in_features = in_features
-        self.hidden_features = hidden_features
-        self.out_features = out_features
-
-        #_before
-        if adapter_scalar == "learnable_scalar":
-            self.scale = nn.Parameter(torch.ones(1))
-        else:
-            self.scale = float(adapter_scalar)
-
-        self.down_proj = nn.Linear(self.in_features, self.hidden_features)
-        self.non_linear_func = nn.ReLU()
-        self.up_proj = nn.Linear(self.hidden_features, self.out_features)
-
-        self.dropout = dropout
-        
-        with torch.no_grad():
-            nn.init.kaiming_uniform_(self.down_proj.weight, a=math.sqrt(5))
-            nn.init.zeros_(self.up_proj.weight)
-            # nn.init.normal_(self.down_proj.weight, std=0.02)
-            # nn.init.normal_(self.up_proj.weight, std=0.02)
-            nn.init.zeros_(self.down_proj.bias)
-            nn.init.zeros_(self.up_proj.bias)
-
-    def forward(self, x):
-        down = self.down_proj(x)
-        down = self.non_linear_func(down)
-        down = nn.functional.dropout(down, p=self.dropout, training=self.training)
-        up = self.up_proj(down)
-
-        up = up * self.scale
-
-        return up
-
-
-# class MlpBlock_with_Adapter(nn.Module):
-#     """ MLP as used in Vision Transformer, MLP-Mixer and related networks
-#     """
-#     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., r=4, adapter_scalar="1.0"):
-#         super().__init__()
-
-#         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-#         self.norm = norm_layer(in_features)
-
-#         out_features = out_features or in_features
-#         hidden_features = hidden_features or in_features
-#         self.fc1 = nn.Linear(in_features, hidden_features)
-#         self.act = act_layer()
-#         self.fc2 = nn.Linear(hidden_features, out_features)
-#         self.drop = nn.Dropout(drop)
-
-#         self.adapter = Adapter(in_features=in_features, hidden_features= in_features // r, out_features=out_features, dropout=drop, adapter_scalar=adapter_scalar)
-
-#     def forward(self, x):
-#         residual = x
-#         x = self.norm(x)
-#         adapter = self.adapter(x)
-#         x = self.fc1(x)
-#         x = self.act(x)
-#         x = self.drop(x)
-#         x = self.fc2(x)
-#         x = self.drop(x)
-#         return x + adapter
-
-class MLP_with_Adapter(nn.Module):
-    def __init__(self, num_features, drop_path, norm2, mlp, r=4, adapter_scalar="1.0"):
-        super().__init__()
-        self.drop_path = drop_path
-        self.norm2 = norm2
-        self.mlp = mlp
-        self.adapter_mlp = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
-
-    def forward(self, x):
-        x = self.norm2(x)
-        x = x + self.drop_path(self.mlp(x)) + self.drop_path(self.adapter_mlp(x))
-        return x
-    
-class Attention_with_Adapter(nn.Module):
-    def __init__(self, num_features, drop_path, norm1, attn, r, adapter_scalar="1.0"):
-        super().__init__()
-        self.drop_path = drop_path
-        self.norm1 = norm1
-        self.attn = attn
-        self.adapter_attn = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
-
-    def forward(self, x):
-        x = self.norm1(x)
-        x = x + self.drop_path(self.attn(x)) + self.drop_path(self.adapter_attn(x))
-        return x
-    
-class Block_with_Adapter(nn.Module):
-
-    def __init__(self, num_features, norm1, attn, drop_path, norm2, mlp, r, adapter_scalar="1.0"):
-        super().__init__()
-        self.norm1 = norm1
-        self.attn = attn
-        self.drop_path = drop_path
-        self.norm2 = norm2
-        self.mlp = mlp
-        
-        self.adapter_attn = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
-        self.adapter_mlp = Adapter(in_features=num_features, hidden_features= num_features // r, out_features=num_features, dropout=0.0, adapter_scalar=adapter_scalar)
-
-    def forward(self, x):
-        x = self.norm1(x)
-        x = x + self.drop_path(self.attn(x)) + self.drop_path(self.adapter_attn(x))
-        x = self.norm2(x)
-        x = x + self.drop_path(self.mlp(x)) + self.drop_path(self.adapter_mlp(x))
-        # x = x + self.drop_path(self.attn(self.norm1(x))) + self.drop_path(self.adapter_attn(self.norm1(x))) * self.s
-        # x = x + self.drop_path(self.mlp(self.norm2(x))) + self.drop_path(self.adapter_mlp(self.norm2(x))) * self.s
-        return x
-
 
 class VisionTransformer(nn.Module):
     """ Vision Transformer
@@ -384,7 +264,7 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None, 
-                 act_layer=None, weight_init='', mode='vanilla', x1_factor=1.0, x2_factor=1.0, reduction_ratio=8, adapter_scalar="1.0"):
+                 act_layer=None, weight_init=''):
         """
         Args:
             img_size (int, tuple): input image size
@@ -449,35 +329,6 @@ class VisionTransformer(nn.Module):
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
         self.init_weights(weight_init)
-
-
-    def convert_to_meft(self, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4, adapter_scalar="1.0"):
-        if mode == 'vanilla':
-            pass
-        elif mode in ['meft1', 'meft2']:
-            # Insert adapter into the current transformer blocks
-            new_blocks = []
-            for block in self.blocks:
-                transformer_block = Block_with_Adapter(num_features=self.num_features, norm1=block.norm1, attn=block.attn, drop_path=block.drop_path, norm2=block.norm2, mlp=block.mlp, r=reduction_ratio, adapter_scalar=adapter_scalar)
-                adapter = Adapter(in_features=self.num_features, hidden_features=self.num_features // reduction_ratio, out_features=self.num_features, dropout=0.0, adapter_scalar=adapter_scalar)
-                if mode == 'meft1':
-                    new_block = MEFT_Block1(transformer_block, adapter, x1_factor, x2_factor)
-                elif mode == 'meft2':
-                    new_block = MEFT_Block2(transformer_block, adapter, x1_factor, x2_factor) 
-                new_blocks.append(new_block)
-            self.blocks = nn.Sequential(*new_blocks)
-        elif mode == 'meft3':
-            new_blocks = []
-            for block in self.blocks:
-                attention_block = Attention_with_Adapter(num_features=self.num_features, drop_path=block.drop_path, norm1=block.norm1, attn=block.attn, r=reduction_ratio, adapter_scalar=adapter_scalar)
-                mlp_block = MLP_with_Adapter(num_features=self.num_features, drop_path=block.drop_path, norm2=block.norm2, mlp=block.mlp, r=reduction_ratio, adapter_scalar=adapter_scalar)
-                new_block = MEFT_Block3(attention_block, mlp_block, x1_factor, x2_factor)
-                new_blocks.append(new_block)
-            self.blocks = nn.Sequential(*new_blocks)
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
-        
-        self.mode = mode
         
     def init_weights(self, mode=''):
         assert mode in ('jax', 'jax_nlhb', 'nlhb', '')
@@ -549,8 +400,35 @@ class VisionTransformer(nn.Module):
         x = x[:, 0]
         out = self.head(x)
         return out
-    # ---------------------------------------------------Disentangled Transfer Learning----------------------------------------- #
+  
 
+def convert_to_meft(model, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4, adapter_scalar="1.0"):
+    if mode == 'vanilla':
+        pass
+    elif mode in ['meft1', 'meft2']:
+        # Insert adapter into the current transformer blocks
+        new_blocks = []
+        for block in model.blocks:
+            transformer_block = Block_with_Adapter(num_features=model.num_features, norm1=block.norm1, attn=block.attn, drop_path=block.drop_path, norm2=block.norm2, mlp=block.mlp, r=reduction_ratio, adapter_scalar=adapter_scalar)
+            adapter = Adapter(in_features=model.num_features, hidden_features=model.num_features // reduction_ratio, out_features=model.num_features, dropout=0.0, adapter_scalar=adapter_scalar)
+            if mode == 'meft1':
+                new_block = MEFT_Block1(transformer_block, adapter, x1_factor, x2_factor)
+            elif mode == 'meft2':
+                new_block = MEFT_Block2(transformer_block, adapter, x1_factor, x2_factor) 
+            new_blocks.append(new_block)
+        model.blocks = nn.Sequential(*new_blocks)
+    elif mode == 'meft3':
+        new_blocks = []
+        for block in model.blocks:
+            attention_block = Attention_with_Adapter(num_features=model.num_features, drop_path=block.drop_path, norm1=block.norm1, attn=block.attn, r=reduction_ratio, adapter_scalar=adapter_scalar)
+            mlp_block = MLP_with_Adapter(num_features=model.num_features, drop_path=block.drop_path, norm2=block.norm2, mlp=block.mlp, r=reduction_ratio, adapter_scalar=adapter_scalar)
+            new_block = MEFT_Block3(attention_block, mlp_block, x1_factor, x2_factor)
+            new_blocks.append(new_block)
+        model.blocks = nn.Sequential(*new_blocks)
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    
+    model.mode = mode
 
 def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., jax_impl: bool = False):
     """ ViT weight initialization
@@ -585,6 +463,7 @@ def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., 
     elif isinstance(module, (nn.LayerNorm, nn.GroupNorm, nn.BatchNorm2d)):
         nn.init.zeros_(module.bias)
         nn.init.ones_(module.weight)
+
 
 
 @torch.no_grad()
@@ -1183,9 +1062,10 @@ def vit_base_patch16_224_miil(pretrained=False, **kwargs):
 
 if __name__ == '__main__':
     # model = vit_base_patch16_224_in21k(pretrained=False, num_classes=100)
-    model = vit_base_patch16_224(pretrained=True, num_classes=1000, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4)
+    model = vit_base_patch16_224(pretrained=True, num_classes=1000)
     breakpoint()
-    model.convert_to_meft()
+    from invertible_vit import convert_to_meft
+    convert_to_meft(model, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4)
     model.cuda()
     model.eval()
 
