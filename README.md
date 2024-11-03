@@ -10,7 +10,7 @@ pip install git+https://github.com/baek85/invertible-nn-meft.git
 ## Examples
 
 ### CouplingBlock
-`invertible_nn.layers.CouplingBlock` implements the reversible layer using coupling function.  
+`invertible_nn_meft.layers.CouplingBlock` implements the reversible layer using coupling function.  
 Coupling function consists of an arbitrary function F and G which performs following transform:  
 $$X_1, X_2 \leftarrow \text{split}(X)$$  
 Y_1 = \lambda_1 \cdot X_1 +  F(X_2)
@@ -23,7 +23,7 @@ Typically, F and G can be a small neural network such as an MLP or a self-attent
 A reversible Vision Transformer architecture is implemented by composing the `CouplingBlock` layers. 
 
 ```python
-from invertible_nn.invertible_vit import InvertibleVisionTransformer
+from invertible_nn_meft.invertible_vit import InvertibleVisionTransformer
 
 device = torch.device("cuda")
 
@@ -43,7 +43,7 @@ loss.backward()
 
 ### ResidualBlock
 
-`invertible_nn.layers.ResidualBlock` implements a reversible residual layer.  
+`invertible_nn_meft.layers.ResidualBlock` implements a reversible residual layer.  
 This block consists of an arbitrary function F and performs the following transform:  
 $$y = x + F(x)$$
 
@@ -53,11 +53,11 @@ During backward pass, the input is reconstructed using fixed-point iteration met
 
 
 ### Make Pre-trained ViT Reversible with trainable adapter
-A MEFT architecture is implemented by composing the `NewCouplingBlock` layers. 
+A MEFT architecture is implemented by composing the `invertible_nn_meft.layers.NewCouplingBlock` layers. 
 
 ```python
 import torch
-from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
+from invertible_nn_meft.vision_transformer import vit_base_patch16_224, convert_to_meft
 
 
 precision=torch.float32
