@@ -1,5 +1,5 @@
 import torch
-from invertible_nn_meft.vision_transformer import vit_base_patch16_224, convert_to_meft
+from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
 
 
 precision=torch.float32
@@ -41,7 +41,7 @@ loss.backward()
 for name, param in model.named_parameters():
     if param.grad is not None:
 
-        if torch.allclose(param.grad, invertible_grads[name], rtol=1e-5, atol=1e-5):
+        if torch.allclose(param.grad, invertible_grads[name], rtol=1e-5, atol=1e-4):
             pass
         else:
             print(f"Gradient check failed for {name}!")

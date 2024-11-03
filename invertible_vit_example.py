@@ -1,5 +1,5 @@
 import torch
-from invertible_nn_meft.invertible_vit import InvertibleVisionTransformer
+from invertible_nn.invertible_vit import InvertibleVisionTransformer
 
 device = torch.device("cuda")
 input = torch.rand(64, 3, 224, 224, requires_grad=True, device=device)

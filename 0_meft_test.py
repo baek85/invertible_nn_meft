@@ -1,6 +1,5 @@
 import torch
-from invertible_nn_meft.invertible_vit import InvertibleVisionTransformer
-from invertible_nn_meft.vision_transformer import vit_base_patch16_224, convert_to_meft
+from invertible_nn.vision_transformer import vit_base_patch16_224, convert_to_meft
 import timm
 
 def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
@@ -28,8 +27,8 @@ print(sum([np.prod(p.size()) for p in model.parameters()]))
 
 
 output = model(input)
-# loss = output.norm()
-loss = softmax_entropy(output).mean()
+loss = output.norm()
+# loss = softmax_entropy(output).mean()
 # breakpoint()
 loss.backward()
 
@@ -47,27 +46,25 @@ for block in model.blocks:
 # model.to(dtype=torch.float32)
 
 output = model(input)
-# loss = output.norm()
-loss = softmax_entropy(output).mean()
+loss = output.norm()
+# loss = softmax_entropy(output).mean()
 loss.backward()
 
 
 for name, param in model.named_parameters():
     if param.grad is not None:
-        # if 'adapter' in name:
-        # caculate angular difference
-        cosine = torch.dot(param.grad.flatten(), invertible_grads[name].flatten()) / (
-            torch.norm(param.grad) * torch.norm(invertible_grads[name])
-        )
-        angle = torch.acos(cosine) * 180 / 3.1415926
-        if angle > 5:
-            print(f"Gradient check for {name} with angle: {angle}")
-        # if torch.allclose(param.grad, invertible_grads[name], rtol=1e-5, atol=1e-5):
-        #     pass
-        #     # print(f"Gradient check passed for {name}!")
-        # else:
-        #     print(f"Gradient check failed for {name}!")
-        #     print(f"Diff: {torch.norm(param.grad - invertible_grads[name])}")
+        # cosine = torch.dot(param.grad.flatten(), invertible_grads[name].flatten()) / (
+        #     torch.norm(param.grad) * torch.norm(invertible_grads[name])
+        # )
+        # angle = torch.acos(cosine) * 180 / 3.1415926
+        # if angle > 5:
+        #     print(f"Gradient check for {name} with angle: {angle}")
+        if torch.allclose(param.grad, invertible_grads[name], rtol=1e-5, atol=1e-5):
+            pass
+            # print(f"Gradient check passed for {name}!")
+        else:
+            print(f"Gradient check failed for {name}!")
+            print(f"Diff: {torch.norm(param.grad - invertible_grads[name])}")
             # print(f"Calculated gradient: {param.grad}")
             # print(f"Saved gradient: {invertible_grads[name]}")
 
