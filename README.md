@@ -12,14 +12,10 @@ pip install git+https://github.com/baek85/invertible-nn-meft.git
 ### CouplingBlock
 `invertible_nn_meft.layers.CouplingBlock` implements the reversible layer using coupling function.  
 Coupling function consists of an arbitrary function F and G which performs following transform:  
-$$X_1, X_2 \leftarrow \text{split}(X)$$  
-$$Y_1 = \lambda_1 \cdot X_1 +  F(X_2)$$
-$$Y_2 = \lambda_2 \cdot X_2 + G(Y_1)$$
-$$Y \leftarrow [Y_1, Y_2]$$  
 
 $$X_1, X_2 \leftarrow \text{split}(X)$$  
-$$Y_1 = X_1 + F(X_2)$$  
-$$Y_2 = X_2 + G(Y_1)$$  
+$$Y_1 = \lambda_1 \cdot X_1 +  F(X_2)$$  
+$$Y_2 = \lambda_2 \cdot X_2 + G(Y_1)$$  
 $$Y \leftarrow [Y_1, Y_2]$$  
 
 Typically, F and G can be a small neural network such as an MLP or a self-attention layer.
