@@ -10,6 +10,7 @@ input = torch.rand(64, 3, 224, 224, requires_grad=True, dtype=precision, device=
 model = vit_base_patch16_224(pretrained=True, num_classes=1000)
 convert_to_meft(model, mode='meft1', x1_factor=0.1, x2_factor=1.0, reduction_ratio=4)
 # convert_to_meft(model, mode='meft2', x1_factor=1.0, x2_factor=0.1, reduction_ratio=4)
+# convert_to_meft(model, mode='meft2', x1_factor=0.1, x2_factor=0.1, reduction_ratio=4)
 model.to(device=device, dtype=precision)
 
 # for idx, block in enumerate(model.blocks):
