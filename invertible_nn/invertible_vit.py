@@ -223,7 +223,8 @@ class MEFT_Block1(invertible_nn.layers.NewCouplingBlock):
             G = adapter,
             X1_factor=x1_factor,
             X2_factor=x2_factor,
-            switch=True
+            switch=True,
+            fix_random_seed=True
         )
 
 class MEFT_Block2(invertible_nn.layers.NewCouplingBlock):
@@ -233,7 +234,8 @@ class MEFT_Block2(invertible_nn.layers.NewCouplingBlock):
             G = transformer_block,
             X1_factor=x1_factor,
             X2_factor=x2_factor,
-            switch=True
+            switch=True,
+            fix_random_seed=True
         )
 
 class MEFT_Block3(invertible_nn.layers.NewCouplingBlock):
@@ -243,7 +245,8 @@ class MEFT_Block3(invertible_nn.layers.NewCouplingBlock):
             G = mlp,
             X1_factor=x1_factor,
             X2_factor=x2_factor,
-            switch=False
+            switch=False,
+            fix_random_seed=True
         )
 
 

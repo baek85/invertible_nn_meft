@@ -1,15 +1,33 @@
 import torch
+import torch.backends
 from invertible_nn.invertible_vit import InvertibleVisionTransformer
+import numpy as np
+import random
+import os
 
 device = torch.device("cuda")
 input = torch.rand(64, 3, 224, 224, requires_grad=True, device=device)
+random_seed = 42
+
+# set reproducibility
+
+torch.manual_seed(random_seed)
+torch.cuda.manual_seed(random_seed)
+torch.cuda.manual_seed_all(random_seed) # multi-GPU
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.enabled = False
+np.random.seed(random_seed)
+random.seed(random_seed)
+os.environ['PYTHONHASHSEED'] = str(random_seed) 
+
 
 model = InvertibleVisionTransformer(
-    depth=12,
+    depth=24,
     patch_size=(16, 16),
     image_size=(224, 224),
     num_classes=1000,
-    mode='meft3',
+    mode='vanilla',
     scale_factor=0.1
 )
 model.to(device=device)
@@ -19,6 +37,8 @@ print(sum([np.prod(p.size()) for p in model.parameters()]))
 
 # @torch.autocast("cuda", dtype=torch.bfloat16)
 
+model.layers[0].first_block = True
+# breakpoint()
 
 # for idx, block in enumerate(model.layers):
 #     if idx < 6:
@@ -27,10 +47,8 @@ print(sum([np.prod(p.size()) for p in model.parameters()]))
 #     else:
 #         block.invert_when_backward = False
 
+# model.layers[3].invert_when_backward = False
 # model.layers[7].invert_when_backward = False
-# model.layers[15].invert_when_backward = False
-model.layers[3].invert_when_backward = False
-model.layers[7].invert_when_backward = False
 
 # with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
 output = model(input)
