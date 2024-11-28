@@ -9,6 +9,7 @@ import sys
 import random
 from fractions import Fraction
 from invertible_nn.exact_rep import ExactRep
+from dataclasses import dataclass
 
 def count_zeros(tensor):
     return torch.count_nonzero(tensor == 0)
@@ -24,7 +25,7 @@ def dynamic_precision(value):
     precision = max(0, 16 - int(torch.log10(torch.abs(value)).item()))
     return precision
 
-def log_tensor_stats(tensor, tensor_name, debug=False):
+def log_tensor_stats(tensor, tensor_name, debug=True):
     # print(f"{tensor_name:10}: Zero count: {count_zeros(tensor):5}, FP64 to FP32 zero count: {count_fp64(tensor):5}")
     if debug:
         # print(f"{tensor_name:10}: Min: {tensor.min():.8f}, Max: {tensor.max():.8f}, Mean: {tensor.mean():.8f}, Std: {tensor.std():.8f}")
@@ -47,7 +48,31 @@ def count_unique(tensor, tensor_name):
     unique_values, counts = torch.unique(tensor, return_counts=True)
     print(f"{tensor_name:10}: Unique count: {len(unique_values)}, Unique values: {unique_values}, Counts: {counts}")
 
+RADIX_SCALE = 2**52
 
+def float_to_fixed(x):
+    """Converts float to fixed-point integer representation."""
+    return (x * RADIX_SCALE).to(dtype=torch.int64)
+
+def detect_fraction_bit_loss(original_value, computed_value):
+    original_fixed = float_to_fixed(original_value)
+    computed_fixed = float_to_fixed(computed_value)
+    if (original_fixed != computed_fixed).any():
+        # print 3-dimensional different indices
+        diff_indices = torch.nonzero(original_fixed != computed_fixed, as_tuple=False)
+        # for i in range(diff_indices.size(0)):
+        #     print(f"Loss detected: {diff_indices[i]}")
+        return True, diff_indices
+    return False, None
+
+
+def check_fraction_loss(original_value, computed_value, tolerance=1e-10):
+    """Checks if there is any loss of precision in fraction bits."""
+    difference = abs(original_value - computed_value)
+    if difference.min() > tolerance:
+        print(f"Loss detected: {difference}")
+        return True
+    return False
 
 class InvertibleLayer(Function):
     @staticmethod
@@ -78,8 +103,7 @@ class InvertibleCouplingLayer(Function):
         """
         ctx.F = F
         ctx.G = G
-        # ctx.eps = 1e-20
-        # ctx.scale = 1
+
         ctx.first_block = first_block
         if hasattr(x, "release_saved_output"):  ## invertible layer 의 출력인지 확인
             x.release_saved_output()  # ctx.saved_tensors 에 있는 레퍼런스 삭제
@@ -94,40 +118,7 @@ class InvertibleCouplingLayer(Function):
         del X_1
         Y_2 = X_2 + G(Y_1)
         del X_2
-
-        # if ctx.eps > 0:
-        #     if ctx.first_block:
-        #         pass
-        #     else:
-        #         X_1 = X_1 + ctx.eps
-        #         X_2 = X_2 + ctx.eps
-        #     Y_1 = F(X_2) - ctx.eps + X_1
-        #     del X_1
-        #     Y_2 = G(Y_1 + ctx.eps) - ctx.eps + X_2
-        #     del X_2
-        # else:
-        #     Y_1 = X_1 + F(X_2)
-        #     del X_1
-        #     Y_2 = X_2 + G(Y_1)
-        #     del X_2
-
-        # if ctx.scale > 1:
-        #     if ctx.first_block:
-        #         pass
-        #     else:
-        #         X_1 = X_1 / ctx.scale
-        #         X_2 = X_2 / ctx.scale
-            
-        #     Y_1 = X_1 * ctx.scale + F(X_2) * ctx.scale
-        #     del X_1
-        #     Y_2 = X_2 * ctx.scale + G(Y_1 / ctx.scale) * ctx.scale
-        # else:
-        #     Y_1 = X_1 + F(X_2)
-        #     del X_1
-        #     Y_2 = X_2 + G(Y_1)
-        #     del X_2
-
-        
+       
         output = torch.cat([Y_1, Y_2], dim=-1)
         del Y_1, Y_2
         # output.save_for_backward = ctx.save_for_backward  ## 이러면 forward 할때 output이 free 될수 있나?
@@ -251,268 +242,6 @@ class CouplingBlock(nn.Module):
             Y_2 = X_2 + self.G(Y_1)
             return torch.cat([Y_1, Y_2], dim=-1)
 
-# class NewInvertibleCouplingLayer(Function):
-
-#     fixed_point_scale = 2e14
-#     use_fixed_point = False
-#     save_features = True
-#     debug = True
-#     """
-#     Custom Backpropagation function to allow (A) flusing memory in forward
-#     and (B) activation recomputation reversibly in backward for gradient
-#     calculation. Inspired by
-#     https://github.com/RobinBruegger/RevTorch/blob/master/revtorch/revtorch.py
-#     """
-#     def __init__(self, fix_random_seed=False):
-#         self.fix_random_seed = fix_random_seed
-#         self.random_seeds = {}
-
-#     def _init_seed(self, namespace):
-#         if self.fix_random_seed:
-#             self.random_seeds[namespace] = random.randint(0, sys.maxsize)
-#             self._set_seed(namespace)
-
-#     def _set_seed(self, namespace):
-#         if self.fix_random_seed:
-#             torch.manual_seed(self.random_seeds[namespace])
-
-#     @staticmethod
-#     @torch.cuda.amp.custom_fwd
-#     def forward(ctx, x: torch.Tensor, F: Callable, G: Callable, X1_factor: float, X2_factor: float, switch: bool, fix_random_seed=False) -> torch.Tensor:
-#         """
-#         Reversible Forward pass.
-#         Each reversible layer implements its own forward pass logic.
-#         forward pass equations:
-#         Y_1 = X1_factor * X_1 + F(X_2), F = Attention
-#         Y_2 = X2_factor * X_2 + G(Y_1), G = MLP
-#         """
-#         ctx.F = F
-#         ctx.G = G
-#         ctx.X1_factor = X1_factor
-#         ctx.X2_factor = X2_factor
-#         ctx.switch = switch
-#         ctx.fix_random_seed = fix_random_seed
-#         ctx.random_seeds = {}
-#         ctx.debug = NewInvertibleCouplingLayer.debug
-
-#         fraction_X1_factor = Fraction(ctx.X1_factor).limit_denominator()
-#         ctx.n1 = fraction_X1_factor.numerator
-#         ctx.d1 = fraction_X1_factor.denominator
-
-#         fraction_X2_factor = Fraction(ctx.X2_factor).limit_denominator()
-#         ctx.n2 = fraction_X2_factor.numerator
-#         ctx.d2 = fraction_X2_factor.denominator
-
-#         def _init_seed(namespace):
-#             if fix_random_seed:
-#                 ctx.random_seeds[namespace] = random.randint(0, sys.maxsize)
-#                 _set_seed(namespace)
-
-#         def _set_seed(namespace):
-#             if fix_random_seed:
-#                 torch.manual_seed(ctx.random_seeds[namespace])
-
-#         if hasattr(x, "release_saved_output"):  ## invertible layer 의 출력인지 확인
-#             x.release_saved_output()  # ctx.saved_tensors 에 있는 레퍼런스 삭제
-#             ctx.save_output = x.save_output
-#         ctx.requires_output = hasattr(x, "release_saved_output")  # 다음 레이어야 output 을 저장해야하는지 확인
-
-#         # obtaining X_1 and X_2 from the concatenated input
-#         X_1, X_2 = torch.chunk(x, 2, dim=-1)
-#         # X_1 = ExactRep(X_1, from_intrep=False)
-#         # X_2 = ExactRep(X_2, from_intrep=False)
-#         ctx.X_1 = X_1.detach()
-#         ctx.X_2 = X_2.detach()
-#         del x
-
-#         _init_seed("F")
-#         Y_1 = X1_factor * X_1 + F(X_2)
-#         # remainder = X_1 % ctx.d1
-#         # information_buffer = Y_1 * ctx.d1 + remainder
-#         ctx.F_X_2 = F(X_2).clone()
-
-#         # free memory since X_1 is now not needed
-#         del X_1
-
-#         _init_seed("G")
-#         Y_2 = X2_factor * X_2 + G(Y_1)
-#         ctx.G_Y_1 = G(Y_1).clone()
-#         # free memory since X_2 is now not needed
-#         del X_2
-        
-#         ctx.Y_1 = Y_1.detach()
-#         ctx.Y_2 = Y_2.detach()
-#         ctx.Y_1_double = Y_1.to(torch.float64).detach()
-#         if switch:
-#             output = torch.cat([Y_2, Y_1], dim=-1)
-#         else:
-#             output = torch.cat([Y_1, Y_2], dim=-1)
-#         del Y_1, Y_2
-        
-#         ctx.output = output.detach()
-
-#         def release_saved_output():
-#             del ctx.output
-
-#         def save_output(x):
-#             ctx.output = x
-#         output.release_saved_output = release_saved_output
-#         output.save_output = save_output
-#         return output
-
-#     @staticmethod
-#     @torch.autograd.function.once_differentiable
-#     @torch.cuda.amp.custom_bwd
-#     def backward(ctx, dy: torch.Tensor) -> torch.Tensor:
-#         """
-#         Reversible Backward pass.
-#         Each layer implements its own logic for backward pass (both
-#         activation recomputation and grad calculation).
-#         """
-#         y = ctx.output
-#         F, G = ctx.F, ctx.G
-#         X1_factor, X2_factor, switch, fix_random_seed = ctx.X1_factor, ctx.X2_factor, ctx.switch, ctx.fix_random_seed
-
-#         def _set_seed(namespace):
-#             if fix_random_seed:
-#                 torch.manual_seed(ctx.random_seeds[namespace])
-                
-#         # obtaining gradients dX_1 and dX_2 from the concatenated input
-#         if switch:
-#             Y_2, Y_1 = torch.chunk(y, 2, dim=-1)
-#             dY_2, dY_1 = torch.chunk(dy, 2, dim=-1)
-#         else:
-#             Y_1, Y_2 = torch.chunk(y, 2, dim=-1)
-#             dY_1, dY_2 = torch.chunk(dy, 2, dim=-1)
-
-#         # log_tensor_stats(dY_1, "dY_1")
-#         # log_tensor_stats(dY_2, "dY_2")
-#         log_tensor_stats(Y_1, "Y_1", ctx.debug)
-#         log_tensor_stats(Y_1 - ctx.Y_1, "Y_1 diff", ctx.debug)
-#         log_tensor_stats(Y_2, "Y_2", ctx.debug)
-#         log_tensor_stats(Y_2 - ctx.Y_2, "Y_2 diff", ctx.debug)
-#         # temporarily record intermediate activation for G
-#         # and use them for gradient calculation of G
-#         with torch.enable_grad():
-#             Y_1.requires_grad_(True)
-
-#             # reconstructing the intermediate activations
-#             # and the computational graph for F.
-#             # using pytorch native logic to differentiate through
-#             # gradients in G in backward pass.
-#             _set_seed("G")
-#             g_Y_1 = G(Y_1)
-#             log_tensor_stats(g_Y_1, "g_Y_1", ctx.debug)
-#             log_tensor_stats(g_Y_1 - ctx.G_Y_1, "g_Y_1 diff", ctx.debug)
-#             g_Y_1.backward(dY_2)
-
-
-#         Y_1_grad = Y_1.grad
-#         Y_1 = Y_1.detach()
-#         g_Y_1 = g_Y_1.detach()
-        
-#         log_tensor_stats(Y_1_grad, "Y_1_grad", ctx.debug)
-
-#         with torch.no_grad():
-#             # recomputing X_2 from the rev equation
-
-#             if NewInvertibleCouplingLayer.use_fixed_point:
-#                 fixed_scale = NewInvertibleCouplingLayer.fixed_point_scale
-#                 Y_2_fp = (Y_2 * fixed_scale).round().long()
-#                 g_Y_1_fp = (g_Y_1 * fixed_scale).round().long()
-                
-#                 X_2_fp = (Y_2_fp - g_Y_1_fp) / int(X2_factor * fixed_scale)
-#                 X_2 = X_2_fp.float()  # 고정소수점 연산 후 float으로 변환
-
-#                 del g_Y_1_fp
-#             else:
-#                 X_2 = (Y_2 - g_Y_1) / X2_factor
-#                 # free memory since g_Y_1 is now not needed
-#                 del g_Y_1
-
-#             log_tensor_stats(X_2, "X_2", ctx.debug)
-#             log_tensor_stats(X_2 - ctx.X_2, "X_2 diff", ctx.debug)
-
-#             # the gradients for the previous block
-#             dX_1 = dY_1 + Y_1_grad
-            
-#             # free memory since Y_1.grad is now not needed
-#             del Y_1_grad
-
-#         # record F activations and calc gradients on F
-#         with torch.enable_grad():
-#             X_2.requires_grad_(True)
-
-#             _set_seed("F")
-#             f_X_2 = F(X_2)
-#             log_tensor_stats(f_X_2, "f_X_2", ctx.debug)
-#             log_tensor_stats(f_X_2 - ctx.F_X_2, "f_X_2 diff", ctx.debug)
-#             f_X_2.backward(dX_1)
-#             # log_tensor_stats(dX_1, "dX_1")
-
-#         X_2_grad = X_2.grad
-#         X_2 = X_2.detach()
-#         f_X_2 = f_X_2.detach()
-        
-#         log_tensor_stats(X_2_grad, "X_2_grad", ctx.debug)
-        
-#         with torch.no_grad():
-#             dY_2 = dY_2 * X2_factor
-#             dX_2 = dY_2 + X_2_grad
-#             del X_2_grad
-#             dX_1 = dX_1 * X1_factor
-
-#         dx = torch.cat([dX_1, dX_2], dim=-1)
-
-#         log_tensor_stats(dX_1, "dX_1", ctx.debug)
-#         log_tensor_stats(dX_2, "dX_2", ctx.debug)
-        
-
-#         if ctx.requires_output:
-#             if NewInvertibleCouplingLayer.use_fixed_point:
-#                 fixed_scale = NewInvertibleCouplingLayer.fixed_point_scale
-#                 Y_1_fp = (Y_1 * fixed_scale).round().long()
-#                 f_X_2_fp = (f_X_2 * fixed_scale).round().long()
-                
-#                 X_1_fp = (Y_1_fp - f_X_2_fp) / int(X1_factor * fixed_scale)
-#                 X_1 = X_1_fp.float() # 고정소수점 연산 후 float으로 변환
-#                 del f_X_2_fp
-#             else:
-#                 X_1 = (Y_1 - f_X_2) / X1_factor
-                
-#                 log_tensor_stats(X_1 - ctx.X_1, "X_1 diff", ctx.debug)
-#                 X_1_new1 = (Y_1 - f_X_2) / X1_factor
-#                 log_tensor_stats(X_1_new1 - ctx.X_1, "new1_X_1 diff", ctx.debug)
-#                 X_1_new2 = Y_1 / X1_factor - f_X_2 / X1_factor
-#                 log_tensor_stats(X_1_new2 - ctx.X_1, "new2_X_1 diff", ctx.debug)
-#                 # count_unique(X_1 - ctx.X_1, "X_1 diff")
-#                 # count_unique(f_X_2 - ctx.F_X_2, "f_X_2 diff")
-#                 X_1_new3 = (Y_1.to(torch.float64) - f_X_2.to(torch.float64)) / X1_factor
-#                 log_tensor_stats(X_1_new3 - ctx.X_1, "new3_X_1 diff", ctx.debug)
-
-#                 X_1_new4 = (ctx.Y_1_double - f_X_2.to(torch.float64)) / X1_factor
-#                 log_tensor_stats(X_1_new4 - ctx.X_1, "new4_X_1 diff", ctx.debug)
-
-#                 X_1_new5 = (ctx.scaled_Y1 - f_X_2 * ctx.scale) / (ctx.scale * X1_factor)
-               
-#                 log_tensor_stats(X_1_new5 - ctx.X_1, "new5_X_1 diff", ctx.debug)
-
-#                 X_1_new6 = ctx.scaled_Y1_2 / X1_factor - (ctx.fx2_scale * f_X_2) / X1_factor
-#                 log_tensor_stats(X_1_new6 - ctx.X_1, "new6_X_1 diff", ctx.debug)
-#                 X_1 = X_1_new6.float()          
-#                 breakpoint()
-                
-#                 del f_X_2
-#             x = torch.cat([X_1, X_2], dim=-1)
-#             ctx.save_output(x.detach())
-
-#             log_tensor_stats(X_1, "X_1", ctx.debug)
-#             log_tensor_stats(X_1 - ctx.X_1, "X_1 diff", ctx.debug)
-            
-#         # breakpoint()
-#         print("end of backward")
-#         return dx, None, None, None, None, None, None
-
 class NewInvertibleCouplingLayer(Function):
 
     """
@@ -536,29 +265,22 @@ class NewInvertibleCouplingLayer(Function):
 
     @staticmethod
     @torch.cuda.amp.custom_fwd
-    def forward(ctx, x: torch.Tensor, F: Callable, G: Callable, X1_factor: float, X2_factor: float, switch: bool, fix_random_seed=False) -> torch.Tensor:
+    def forward(ctx, x: torch.Tensor, F: Callable, G: Callable, x1_factor: float, x2_factor: float, switch: bool, fix_random_seed=False) -> torch.Tensor:
         """
         Reversible Forward pass.
         Each reversible layer implements its own forward pass logic.
         forward pass equations:
-        Y_1 = X1_factor * X_1 + F(X_2), F = Attention
-        Y_2 = X2_factor * X_2 + G(Y_1), G = MLP
+        y1 = x1_factor * x1 + F(x2), F = Attention
+        y2 = x2_factor * x2 + G(y1), G = MLP
         """
         ctx.F = F
         ctx.G = G
-        ctx.X1_factor = X1_factor
-        ctx.X2_factor = X2_factor
+        ctx.x1_factor = x1_factor
+        ctx.x2_factor = x2_factor
         ctx.switch = switch
         ctx.fix_random_seed = fix_random_seed
         ctx.random_seeds = {}
-
-        fraction_X1_factor = Fraction(ctx.X1_factor).limit_denominator()
-        ctx.n1 = fraction_X1_factor.numerator
-        ctx.d1 = fraction_X1_factor.denominator
-
-        fraction_X2_factor = Fraction(ctx.X2_factor).limit_denominator()
-        ctx.n2 = fraction_X2_factor.numerator
-        ctx.d2 = fraction_X2_factor.denominator
+        ctx.debug = False
 
         def _init_seed(namespace):
             if fix_random_seed:
@@ -574,26 +296,44 @@ class NewInvertibleCouplingLayer(Function):
             ctx.save_output = x.save_output
         ctx.requires_output = hasattr(x, "release_saved_output")  # 다음 레이어야 output 을 저장해야하는지 확인
 
-        # obtaining X_1 and X_2 from the concatenated input
-        X_1, X_2 = torch.chunk(x, 2, dim=-1)
+        x1, x2 = torch.chunk(x, 2, dim=-1)
         del x
 
         _init_seed("F")
-        Y_1 = X1_factor * X_1 + F(X_2)
-
-        # free memory since X_1 is now not needed
-        del X_1
+        y1 = x1_factor * x1 + F(x2.to(torch.float32)).to(x1.dtype)
+        if ctx.debug:
+            first_term = x1_factor * x1
+            second_term = F(x2.to(torch.float32)).to(x1.dtype)
+            result = first_term + second_term
+            result = result - second_term
+            diff = (result - first_term) / x1_factor
+            log_tensor_stats(diff, "x1 diff (forward)")
+            ctx.x1 = x1.detach()
+            ctx.F_x2 = second_term.detach()
+            
+        del x1
 
         _init_seed("G")
-        Y_2 = X2_factor * X_2 + G(Y_1)
-        # free memory since X_2 is now not needed
-        del X_2
+        y2 = x2_factor * x2 + G(y1.to(torch.float32)).to(x2.dtype)
+
+        if ctx.debug:
+            first_term = x2_factor * x2
+            second_term = G(y1.to(torch.float32)).to(x2.dtype)
+            result = first_term + second_term
+            result = result - second_term
+            diff = (result - first_term) / x2_factor
+            log_tensor_stats(diff, "x2 diff (forward)")
+            ctx.x2 = x2.detach()
+            ctx.G_y1 = second_term.detach()
+            # breakpoint()
+
+        del x2
         
         if switch:
-            output = torch.cat([Y_2, Y_1], dim=-1)
+            output = torch.cat([y2, y1], dim=-1)
         else:
-            output = torch.cat([Y_1, Y_2], dim=-1)
-        del Y_1, Y_2
+            output = torch.cat([y1, y2], dim=-1)
+        del y1, y2
         
         ctx.output = output.detach()
 
@@ -617,78 +357,66 @@ class NewInvertibleCouplingLayer(Function):
         """
         y = ctx.output
         F, G = ctx.F, ctx.G
-        X1_factor, X2_factor, switch, fix_random_seed = ctx.X1_factor, ctx.X2_factor, ctx.switch, ctx.fix_random_seed
+        x1_factor, x2_factor, switch, fix_random_seed = ctx.x1_factor, ctx.x2_factor, ctx.switch, ctx.fix_random_seed
 
         def _set_seed(namespace):
             if fix_random_seed:
                 torch.manual_seed(ctx.random_seeds[namespace])
                 
-        # obtaining gradients dX_1 and dX_2 from the concatenated input
         if switch:
-            Y_2, Y_1 = torch.chunk(y, 2, dim=-1)
-            dY_2, dY_1 = torch.chunk(dy, 2, dim=-1)
+            y2, y1 = torch.chunk(y, 2, dim=-1)
+            dy2, dy1 = torch.chunk(dy, 2, dim=-1)
         else:
-            Y_1, Y_2 = torch.chunk(y, 2, dim=-1)
-            dY_1, dY_2 = torch.chunk(dy, 2, dim=-1)
+            y1, y2 = torch.chunk(y, 2, dim=-1)
+            dy1, dy2 = torch.chunk(dy, 2, dim=-1)
 
-        # temporarily record intermediate activation for G
-        # and use them for gradient calculation of G
         with torch.enable_grad():
-            Y_1.requires_grad_(True)
-
-            # reconstructing the intermediate activations
-            # and the computational graph for F.
-            # using pytorch native logic to differentiate through
-            # gradients in G in backward pass.
+            y1.requires_grad_(True)
             _set_seed("G")
-            g_Y_1 = G(Y_1)
-            g_Y_1.backward(dY_2)
+            g_y1 = G(y1.to(torch.float32))
+            g_y1.backward(dy2)
 
 
-        Y_1_grad = Y_1.grad
-        Y_1 = Y_1.detach()
-        g_Y_1 = g_Y_1.detach()
+        y1_grad = y1.grad
+        y1 = y1.detach()
+        g_y1 = g_y1.detach()
 
         with torch.no_grad():
-            # recomputing X_2 from the rev equation
+            x2 = (y2 - g_y1) / x2_factor
+            if ctx.debug:
+                log_tensor_stats(x2 - ctx.x2, "x2 diff (backward)")
+            del g_y1
+            dx1 = dy1 + y1_grad
+            del y1_grad
 
-            X_2 = (Y_2 - g_Y_1) / X2_factor
-            # free memory since g_Y_1 is now not needed
-            del g_Y_1
-
-            # the gradients for the previous block
-            dX_1 = dY_1 + Y_1_grad
-            
-            # free memory since Y_1.grad is now not needed
-            del Y_1_grad
-
-        # record F activations and calc gradients on F
         with torch.enable_grad():
-            X_2.requires_grad_(True)
+            x2.requires_grad_(True)
 
             _set_seed("F")
-            f_X_2 = F(X_2)
-            f_X_2.backward(dX_1)
+            f_x2 = F(x2.to(torch.float32))
+            f_x2.backward(dx1)
 
-        X_2_grad = X_2.grad
-        X_2 = X_2.detach()
-        f_X_2 = f_X_2.detach()
+        x2_grad = x2.grad
+        x2 = x2.detach()
+        f_x2 = f_x2.detach()
         
         
         with torch.no_grad():
-            dY_2 = dY_2 * X2_factor
-            dX_2 = dY_2 + X_2_grad
-            del X_2_grad
-            dX_1 = dX_1 * X1_factor
+            dy2 = dy2 * x2_factor
+            dx2 = dy2 + x2_grad
+            del x2_grad
+            dx1 = dx1 * x1_factor
 
-        dx = torch.cat([dX_1, dX_2], dim=-1)        
+        dx = torch.cat([dx1, dx2], dim=-1)        
 
         if ctx.requires_output:
-            X_1 = (Y_1 - f_X_2) / X1_factor                
-            del f_X_2
-            x = torch.cat([X_1, X_2], dim=-1)
+            x1 = (y1 - f_x2) / x1_factor
+            if ctx.debug:
+                log_tensor_stats(x1 - ctx.x1, "x1 diff (backward)")
+                breakpoint()
+            del f_x2
+            x = torch.cat([x1, x2], dim=-1)
             ctx.save_output(x.detach())
-
         return dx, None, None, None, None, None, None
     
 
@@ -697,34 +425,46 @@ class NewCouplingBlock(nn.Module):
     F and G are arbitrary modules.
     Insert F and G into the coupling structure.
     In the backward pass, use the activation values sent from the subsequent block to recompute intermediate values.
-    Y_1 = X1_factor * X_1 + F(X_2)
-    Y_2 = X2_factor * X_2 + G(Y_1)
+    y1 = x1_factor * x1 + F(x2)
+    y2 = x2_factor * x2 + G(y1)
     """
-    def __init__(self, F: nn.Module, G: nn.Module, invert_when_backward=True, X1_factor: float = 1.0, X2_factor: float = 1.0, switch: bool = False, fix_random_seed=True):
+    x1_dtype = torch.float64
+    x2_dtype = torch.float64
+    block_dtype = torch.float32
+    def __init__(self, F: nn.Module, G: nn.Module, invert_when_backward=True, x1_factor: float = 1.0, x2_factor: float = 1.0, switch: bool = False, fix_random_seed=True):
         super().__init__()
-        self.F = F
-        self.G = G
+        self.F = F.to(self.block_dtype)
+        self.G = G.to(self.block_dtype)
         self.invert_when_backward = invert_when_backward
-        self.X1_factor = X1_factor
-        self.X2_factor = X2_factor
+        self.x1_factor = x1_factor
+        self.x2_factor = x2_factor
         self.switch = switch
         self.fix_random_seed = fix_random_seed
 
+
     def forward(self, x):
+        x1, x2 = torch.chunk(x, 2, dim=-1)
+        x1 = x1.to(self.x1_dtype)
+        x2 = x2.to(self.x2_dtype)
+
+        if self.fix_random_seed:
+            torch.manual_seed(random.randint(0, sys.maxsize))
+
         if self.invert_when_backward:
-            return NewInvertibleCouplingLayer.apply(x, self.F, self.G, self.X1_factor, self.X2_factor, self.switch, self.fix_random_seed)
+            y = NewInvertibleCouplingLayer.apply(x, self.F, self.G, self.x1_factor, self.x2_factor, self.switch, self.fix_random_seed)
         else:
-            X_1, X_2 = torch.chunk(x, 2, dim=-1)
-            if self.fix_random_seed:
-                torch.manual_seed(random.randint(0, sys.maxsize))
-            Y_1 = self.X1_factor * X_1 + self.F(X_2)
-            if self.fix_random_seed:
-                torch.manual_seed(random.randint(0, sys.maxsize))
-            Y_2 = self.X2_factor * X_2 + self.G(Y_1)
+            y1 = self.x1_factor * x1 + self.F(x2.to(self.block_dtype))
+            y2 = self.x2_factor * x2 + self.G(y1.to(self.block_dtype))
             if self.switch:
-                return torch.cat([Y_2, Y_1], dim=-1)
+                y1 = y1.to(self.x2_dtype)
+                y2 = y2.to(self.x1_dtype)
+                y = torch.cat([y2, y1], dim=-1)
             else:
-                return torch.cat([Y_1, Y_2], dim=-1)
+                y1 = y1.to(self.x1_dtype)
+                y2 = y2.to(self.x2_dtype)
+                y = torch.cat([y1, y2], dim=-1)
+
+        return y
 
 
 

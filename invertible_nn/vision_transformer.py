@@ -376,6 +376,7 @@ class VisionTransformer(nn.Module):
     def forward(self, x):
         
         B = x.shape[0]
+        dtype = x.dtype
         x = self.patch_embed(x)
         cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
 
@@ -386,16 +387,24 @@ class VisionTransformer(nn.Module):
         x = self.pos_drop(x + self.pos_embed)
 
         if self.mode in ['meft1', 'meft2', 'meft3']:
+            # x1, x2 = x, x
+            # output_hooks = None
+            # for bid, block in enumerate(self.blocks):
+            #     x1, x2, output_hooks = block(x1, x2, output_hooks)
             x = torch.cat([x, x], dim=-1)
-            
-        for bid, block in enumerate(self.blocks):
-            x = block(x)
+            for bid, block in enumerate(self.blocks):
+                x = block(x)
+
+            x1, x2 = torch.chunk(x, 2, dim=-1)
+        else:
+            for bid, block in enumerate(self.blocks):
+                x = block(x)
 
         # x = x[:, self.num_tokens:].mean(dim=1)
         if self.mode in ['meft1', 'meft2', 'meft3']:
-            x1, x2 = torch.chunk(x, 2, dim=-1)
             x = (x1 + x2) / 2
-
+            x = x.to(dtype=dtype)
+        
         x = self.norm(x)
         x = x[:, 0]
         out = self.head(x)
